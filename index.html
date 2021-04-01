@@ -44,7 +44,7 @@
         await init();
 
         // And afterwards we can use all the functionality defined in wasm.
-		const result = highlight("import \"github.com\"", "test.go", true, true);
+		const result = highlight("package main\n\nimport (\n    \"fmt\"\n    \"time\"\n)\n\nfunc f(from string) {\n    for i := 0; i < 3; i++ {\n        fmt.Println(from, \":\", i)\n    }\n}\n\nfunc main() {\n\n    f(\"direct\")\n\n    go f(\"goroutine\")\n\n    go func(msg string) {\n        fmt.Println(msg)\n    }(\"going\")\n\n    time.Sleep(time.Second)\n    fmt.Println(\"done\")\n}", "test.go", true, true);
         console.log(result);
       }
 

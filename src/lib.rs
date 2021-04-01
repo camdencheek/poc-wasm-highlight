@@ -35,10 +35,14 @@ pub fn highlight(code: String, filepath: String, is_light_theme: bool, highlight
         return Err(HighlightError::Binary)
     }
 
+    // TODO (@camdencheek): I think we can configure syntect to just output class names rather than
+    // in-line styles. We should consider doing this so the syntax highlighting can rely on the
+    // site's CSS rather than on the compiled-in theme files.
+    // https://docs.rs/syntect/4.5.0/syntect/html/struct.ClassedHTMLGenerator.html
     let theme = if is_light_theme {
-        THEME_SET.themes.get("Sourcegraph").expect("theme should be compiled with the binary")
-    } else {
         THEME_SET.themes.get("Sourcegraph (light)").expect("theme should be compiled with the binary")
+    } else {
+        THEME_SET.themes.get("Sourcegraph").expect("theme should be compiled with the binary")
     };
 
     // Determine syntax definition by extension.
@@ -97,13 +101,15 @@ fn highlighted_table_for_string(code: &str, ss: &SyntaxSet, syntax: &SyntaxRefer
     let mut output = start_highlighted_table();
 
     for (i, line) in LinesWithEndings::from(code).enumerate() {
-        start_table_row(&mut output, i);
+        start_table_row(&mut output, i+1);
+        output.push_str("<td class=\"code\">");
         if !highlight_long_lines && line.len() > 2000 {
             output.push_str(line);
         } else {
             let regions = highlighter.highlight(line, ss);
             append_highlighted_html_for_styled_line(&regions[..], IncludeBackground::No, &mut output);
         }
+        output.push_str("</td>");
         end_table_row(&mut output);
     }
 
