@@ -14,7 +14,7 @@ lazy_static = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 wee_alloc = "0.4.5"
 mime-sniffer = "^0.1"
-
+difference = "2.0"
 
 [dependencies.web-sys]
 version = "0.3.4"

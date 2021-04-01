@@ -46,7 +46,6 @@ pub fn highlight(code: String, filepath: String, is_light_theme: bool, highlight
     };
 
     // Determine syntax definition by extension.
-    let mut is_plaintext = false;
     let path = Path::new(&filepath);
     let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
     let extension = path.extension().and_then(|x| x.to_str()).unwrap_or("");
@@ -73,7 +72,6 @@ pub fn highlight(code: String, filepath: String, is_light_theme: bool, highlight
         SYNTAX_SET.find_syntax_by_first_line(&code)
     }).unwrap_or_else(|| {
         // Render plain text, so the user gets the same HTML output structure.
-        is_plaintext = true;
         SYNTAX_SET.find_syntax_plain_text()
     });
 
@@ -102,14 +100,12 @@ fn highlighted_table_for_string(code: &str, ss: &SyntaxSet, syntax: &SyntaxRefer
 
     for (i, line) in LinesWithEndings::from(code).enumerate() {
         start_table_row(&mut output, i+1);
-        output.push_str("<td class=\"code\">");
         if !highlight_long_lines && line.len() > 2000 {
             output.push_str(line);
         } else {
             let regions = highlighter.highlight(line, ss);
             append_highlighted_html_for_styled_line(&regions[..], IncludeBackground::No, &mut output);
         }
-        output.push_str("</td>");
         end_table_row(&mut output);
     }
 
@@ -118,21 +114,22 @@ fn highlighted_table_for_string(code: &str, ss: &SyntaxSet, syntax: &SyntaxRefer
 }
 
 fn start_highlighted_table() -> String {
-    "<table>".into()
+    "<table><tbody>".into()
 }
 
 fn end_highlighted_table(s: &mut String) {
-    s.push_str("</table>");
+    s.push_str("</tbody></table>");
 }
 
 fn start_table_row(s: &mut String, row_num: usize) {
-    s.push_str(&format!("<tr><td class=\"line\" data-line=\"{}\"></td>", row_num));
+    s.push_str(&format!("<tr><td class=\"line\" data-line=\"{}\"></td><td class=\"code\"><div>", row_num));
 }
 
 fn end_table_row(s: &mut String) {
-    s.push_str("</tr>");
+    s.push_str("</div></td></tr>");
 }
 
+#[derive(Debug)]
 pub enum HighlightError {
     Binary,
 }
@@ -144,3 +141,31 @@ impl From<HighlightError> for JsValue {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use super::highlight;
+    use difference::assert_diff;
+
+    struct Asset {
+        input: String,
+        output: String,
+        filename: String,
+    }
+
+    fn read_asset(id: usize) -> Asset {
+        let input = fs::read_to_string(format!("./src/assets/{}/input", id)).unwrap().trim().to_string();
+        let output = fs::read_to_string(format!("./src/assets/{}/output", id)).unwrap().trim().to_string();
+        let filename = fs::read_to_string(format!("./src/assets/{}/filename", id)).unwrap().trim().to_string();
+        Asset { input, output, filename }
+    }
+
+    #[test]
+    fn asset1() {
+        let asset = read_asset(1);
+        let result = highlight(asset.input, asset.filename, true, true).unwrap();
+        assert_diff!(&asset.output, &result, "", 0);
+    }
+}
+
