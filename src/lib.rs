@@ -25,25 +25,6 @@ lazy_static!{
     static ref THEME_SET: ThemeSet = ThemeSet::load_defaults();
 }
 
-// Called when the wasm module is instantiated
-#[wasm_bindgen(start)]
-pub fn main() -> Result<(), JsValue> {
-    // Use `web_sys`'s global `window` function to get a handle on the global
-    // window object.
-    let window = web_sys::window().expect("no global `window` exists");
-    let document = window.document().expect("should have a document on window");
-    let body = document.body().expect("document should have a body");
-
-    // Manufacture the element we're gonna append
-    let val = document.create_element("p")?;
-    val.set_inner_html("Hello from Rust!");
-
-    body.append_child(&val)?;
-
-    Ok(())
-}
-
-
 #[wasm_bindgen(js_name = "highlight")]
 pub fn highlight_js(code: String, filepath: String, is_light_theme: bool, highlight_long_lines: bool) -> Result<String, JsValue> {
     highlight(code, filepath, is_light_theme, highlight_long_lines).map_err(|e| e.into())
@@ -131,7 +112,7 @@ fn highlighted_table_for_string(code: &str, ss: &SyntaxSet, syntax: &SyntaxRefer
 }
 
 fn start_highlighted_table() -> String {
-    "<table>\n".into()
+    "<table>".into()
 }
 
 fn end_highlighted_table(s: &mut String) {
@@ -139,7 +120,7 @@ fn end_highlighted_table(s: &mut String) {
 }
 
 fn start_table_row(s: &mut String, row_num: usize) {
-    s.push_str(&format!("<tr>\n<td class=\"line\" data-line=\"{}\"></td>\n", row_num));
+    s.push_str(&format!("<tr><td class=\"line\" data-line=\"{}\"></td>", row_num));
 }
 
 fn end_table_row(s: &mut String) {
