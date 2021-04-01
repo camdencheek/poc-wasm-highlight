@@ -103,7 +103,7 @@ fn highlighted_table_for_string(code: &str, ss: &SyntaxSet, syntax: &SyntaxRefer
         if !highlight_long_lines && line.len() > 2000 {
             output.push_str(line);
         } else {
-            let regions = highlighter.highlight(line, ss);
+            let regions = highlighter.highlight(line.trim(), ss);
             append_highlighted_html_for_styled_line(&regions[..], IncludeBackground::No, &mut output);
         }
         end_table_row(&mut output);
