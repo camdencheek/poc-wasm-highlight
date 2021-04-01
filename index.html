@@ -44,11 +44,7 @@
         await init();
 
         // And afterwards we can use all the functionality defined in wasm.
-		const result = highlight({
-				extension: ".go",
-				theme: "base16-ocean.dark",
-				filepath: "test.go",
-				code: "import \"github.com\"" });
+		const result = highlight("import \"github.com\"", "test.go", true, true);
         console.log(result);
       }
 

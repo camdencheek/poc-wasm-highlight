@@ -1,10 +1,14 @@
 use wasm_bindgen::prelude::*;
 use lazy_static::lazy_static;
-use syntect::highlighting::ThemeSet;
-use syntect::parsing::SyntaxSet;
-use serde::{Serialize, Deserialize};
-use syntect::html::highlighted_html_for_string;
+use syntect::{
+    highlighting::{ThemeSet, Theme},
+    parsing::{SyntaxSet, SyntaxReference},
+    html::{append_highlighted_html_for_styled_line, IncludeBackground},
+    util::LinesWithEndings,
+    easy::HighlightLines,
+};
 use std::path::Path;
+use mime_sniffer::MimeTypeSniffer;
 
 
 extern crate wee_alloc;
@@ -39,119 +43,117 @@ pub fn main() -> Result<(), JsValue> {
     Ok(())
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct Query {
-    // Deprecated field with a default empty string value, kept for backwards
-    // compatability with old clients.
-    pub extension: String,
 
-    // default empty string value for backwards compat with clients who do not specify this field.
-    pub filepath: String,
-
-    pub theme: String,
-    pub code: String,
+#[wasm_bindgen(js_name = "highlight")]
+pub fn highlight_js(code: String, filepath: String, is_light_theme: bool, highlight_long_lines: bool) -> Result<String, JsValue> {
+    highlight(code, filepath, is_light_theme, highlight_long_lines).map_err(|e| e.into())
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct Highlighted {
-    data: String,
-    plaintext: bool,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct Error {
-    error: String,
-    code: String,
-}
-
-impl Into<JsValue> for Error {
-    fn into(self) -> JsValue {
-        return JsValue::from_serde(&self).unwrap()
+pub fn highlight(code: String, filepath: String, is_light_theme: bool, highlight_long_lines: bool) -> Result<String, HighlightError>  {
+    if is_binary(&code.as_bytes()) {
+        return Err(HighlightError::Binary)
     }
+
+    let theme = if is_light_theme {
+        THEME_SET.themes.get("Sourcegraph").expect("theme should be compiled with the binary")
+    } else {
+        THEME_SET.themes.get("Sourcegraph (light)").expect("theme should be compiled with the binary")
+    };
+
+    // Determine syntax definition by extension.
+    let mut is_plaintext = false;
+    let path = Path::new(&filepath);
+    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let extension = path.extension().and_then(|x| x.to_str()).unwrap_or("");
+
+    // Split the input path ("foo/myfile.go") into file name
+    // ("myfile.go") and extension ("go").
+
+    // To determine the syntax definition, we must first check using the
+    // filename as some syntaxes match an "extension" that is actually a
+    // whole file name (e.g. "Dockerfile" or "CMakeLists.txt"); see e.g. https://github.com/trishume/syntect/pull/170
+    //
+    // After that, if we do not find any syntax, we can actually check by
+    // extension and lastly via the first line of the code.
+
+    // First try to find a syntax whose "extension" matches our file
+    // name. This is done due to some syntaxes matching an "extension"
+    // that is actually a whole file name (e.g. "Dockerfile" or "CMakeLists.txt")
+    // see https://github.com/trishume/syntect/pull/170
+    let syntax_def = SYNTAX_SET.find_syntax_by_extension(file_name).or_else(|| {
+        // Now try to find the syntax by the actual file extension.
+        SYNTAX_SET.find_syntax_by_extension(extension)
+    }).or_else(|| {
+        // Fall back: Determine syntax definition by first line.
+        SYNTAX_SET.find_syntax_by_first_line(&code)
+    }).unwrap_or_else(|| {
+        // Render plain text, so the user gets the same HTML output structure.
+        is_plaintext = true;
+        SYNTAX_SET.find_syntax_plain_text()
+    });
+
+
+    // TODO(slimsag): return the theme's background color (and other info??) to caller?
+    // https://github.com/trishume/syntect/blob/c8b47758a3872d478c7fc740782cd468b2c0a96b/examples/synhtml.rs#L24
+
+    Ok(highlighted_table_for_string(&code, &SYNTAX_SET, &syntax_def, theme, highlight_long_lines))
 }
 
-#[wasm_bindgen]
-pub fn highlight(q: JsValue) -> JsValue {
-    let q = match q.into_serde::<Query>() {
-        Ok(v) => v,
-        Err(e) => return Error{
-            error: format!("{}", e),
-            code: "".into(),
-        }.into()
-    };
-        // Determine theme to use.
-        //
-        // TODO(slimsag): We could let the query specify the theme file's actual
-        // bytes? e.g. via `load_from_reader`.
-        let theme = match THEME_SET.themes.get(&q.theme) {
-            Some(v) => v,
-            None => return JsValue::from_serde(&Error{
-                error: "invalid theme".into(),
-                code: "invalid_theme".into()
-            }).unwrap(),
-        };
+fn is_binary(content: &[u8]) -> bool {
+    if let Ok(_) = std::str::from_utf8(content) {
+        return false
+    }
 
-        // Determine syntax definition by extension.
-        let mut is_plaintext = false;
-        let syntax_def = if q.filepath == "" {
-            // Legacy codepath, kept for backwards-compatability with old clients.
-            match SYNTAX_SET.find_syntax_by_extension(&q.extension) {
-                Some(v) => v,
-                None =>
-                    // Fall back: Determine syntax definition by first line.
-                    match SYNTAX_SET.find_syntax_by_first_line(&q.code) {
-                        Some(v) => v,
-                        None => return JsValue::from_serde(&Error{
-                            error: "invalid extension".into(),
-                            code: "".into()
-                        }).unwrap(),
-                },
-            }
+    if let Some(m) = content.sniff_mime_type() {
+        return !m.starts_with("text/")
+    }
+
+    return true
+}
+
+fn highlighted_table_for_string(code: &str, ss: &SyntaxSet, syntax: &SyntaxReference, theme: &Theme, highlight_long_lines: bool) -> String {
+    let mut highlighter = HighlightLines::new(syntax, theme);
+    let mut output = start_highlighted_table();
+
+    for (i, line) in LinesWithEndings::from(code).enumerate() {
+        start_table_row(&mut output, i);
+        if !highlight_long_lines && line.len() > 2000 {
+            output.push_str(line);
         } else {
-            // Split the input path ("foo/myfile.go") into file name
-            // ("myfile.go") and extension ("go").
-            let path = Path::new(&q.filepath);
-            let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let extension = path.extension().and_then(|x| x.to_str()).unwrap_or("");
+            let regions = highlighter.highlight(line, ss);
+            append_highlighted_html_for_styled_line(&regions[..], IncludeBackground::No, &mut output);
+        }
+        end_table_row(&mut output);
+    }
 
-            // To determine the syntax definition, we must first check using the
-            // filename as some syntaxes match an "extension" that is actually a
-            // whole file name (e.g. "Dockerfile" or "CMakeLists.txt"); see e.g. https://github.com/trishume/syntect/pull/170
-            //
-            // After that, if we do not find any syntax, we can actually check by
-            // extension and lastly via the first line of the code.
+    end_highlighted_table(&mut output);
+    output
+}
 
-            // First try to find a syntax whose "extension" matches our file
-            // name. This is done due to some syntaxes matching an "extension"
-            // that is actually a whole file name (e.g. "Dockerfile" or "CMakeLists.txt")
-            // see https://github.com/trishume/syntect/pull/170
-            match SYNTAX_SET.find_syntax_by_extension(file_name) {
-                Some(v) => v,
-                None =>
-                    // Now try to find the syntax by the actual file extension.
-                    match SYNTAX_SET.find_syntax_by_extension(extension) {
-                        Some(v) => v,
-                        None =>
-                            // Fall back: Determine syntax definition by first line.
-                            match SYNTAX_SET.find_syntax_by_first_line(&q.code) {
-                                Some(v) => v,
-                                None => {
-                                    is_plaintext = true;
+fn start_highlighted_table() -> String {
+    "<table>\n".into()
+}
 
-                                    // Render plain text, so the user gets the same HTML
-                                    // output structure.
-                                    SYNTAX_SET.find_syntax_plain_text()
-                                }
-                        },
-                    }
-            }
-        };
+fn end_highlighted_table(s: &mut String) {
+    s.push_str("</table>");
+}
 
-        // TODO(slimsag): return the theme's background color (and other info??) to caller?
-        // https://github.com/trishume/syntect/blob/c8b47758a3872d478c7fc740782cd468b2c0a96b/examples/synhtml.rs#L24
+fn start_table_row(s: &mut String, row_num: usize) {
+    s.push_str(&format!("<tr>\n<td class=\"line\" data-line=\"{}\"></td>\n", row_num));
+}
 
-        JsValue::from_serde(&Highlighted{
-            data: highlighted_html_for_string(&q.code, &SYNTAX_SET, &syntax_def, theme),
-            plaintext: is_plaintext,
-        }).unwrap()
+fn end_table_row(s: &mut String) {
+    s.push_str("</tr>");
+}
+
+pub enum HighlightError {
+    Binary,
+}
+
+impl From<HighlightError> for JsValue {
+    fn from(e: HighlightError) -> JsValue {
+        match e {
+            HighlightError::Binary => JsValue::from("cannot render binary file"),
+        }
+    }
 }
