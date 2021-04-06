@@ -1,8 +1,7 @@
 To run: 
 
 ```
-wasm-pack build --target web
-python3 -m http.server
+npm run serve
 ```
 
 Navigate to `localhost:8000/`

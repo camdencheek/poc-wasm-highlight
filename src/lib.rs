@@ -10,7 +10,6 @@ use syntect::{
 use std::path::Path;
 use mime_sniffer::MimeTypeSniffer;
 
-
 extern crate wee_alloc;
 
 // Use `wee_alloc` as the global allocator.
@@ -25,12 +24,12 @@ lazy_static!{
     static ref THEME_SET: ThemeSet = ThemeSet::load_defaults();
 }
 
-#[wasm_bindgen(js_name = "highlight")]
-pub fn highlight_js(code: String, filepath: String, is_light_theme: bool, highlight_long_lines: bool) -> Result<String, JsValue> {
-    highlight(code, filepath, is_light_theme, highlight_long_lines).map_err(|e| e.into())
+#[wasm_bindgen(js_name = "highlight_file")]
+pub fn highlight_file_js(code: String, filepath: String, is_light_theme: bool, highlight_long_lines: bool) -> Result<String, JsValue> {
+    highlight(&code, &filepath, is_light_theme, highlight_long_lines).map_err(|e| e.into())
 }
 
-pub fn highlight(code: String, filepath: String, is_light_theme: bool, highlight_long_lines: bool) -> Result<String, HighlightError>  {
+pub fn highlight(code: &str, filepath: &str, is_light_theme: bool, highlight_long_lines: bool) -> Result<String, HighlightError>  {
     if is_binary(&code.as_bytes()) {
         return Err(HighlightError::Binary)
     }
@@ -79,7 +78,7 @@ pub fn highlight(code: String, filepath: String, is_light_theme: bool, highlight
     // TODO(slimsag): return the theme's background color (and other info??) to caller?
     // https://github.com/trishume/syntect/blob/c8b47758a3872d478c7fc740782cd468b2c0a96b/examples/synhtml.rs#L24
 
-    Ok(highlighted_table_for_string(&code, &SYNTAX_SET, &syntax_def, theme, highlight_long_lines))
+    Ok(highlight_file(&code, &SYNTAX_SET, &syntax_def, theme, highlight_long_lines))
 }
 
 fn is_binary(content: &[u8]) -> bool {
@@ -94,27 +93,50 @@ fn is_binary(content: &[u8]) -> bool {
     return true
 }
 
-fn highlighted_table_for_string(code: &str, ss: &SyntaxSet, syntax: &SyntaxReference, theme: &Theme, highlight_long_lines: bool) -> String {
+fn highlighted_rows<'a>(code: &'a str, ss: &'a SyntaxSet, syntax: &'a SyntaxReference, theme: &'a Theme, highlight_long_lines: bool) -> impl Iterator<Item = String> + 'a {
     let mut highlighter = HighlightLines::new(syntax, theme);
-    let mut output = start_highlighted_table();
 
-    for (i, line) in LinesWithEndings::from(code).enumerate() {
-        start_table_row(&mut output, i+1);
+    LinesWithEndings::from(code).enumerate().map(move |(i, line)| {
+        let mut highlighted = String::with_capacity(8 * line.len());
+        start_table_row(&mut highlighted, i+1);
         if !highlight_long_lines && line.len() > 2000 {
-            output.push_str(line);
+            highlighted.push_str(line);
         } else {
-            let regions = highlighter.highlight(line.trim(), ss);
-            append_highlighted_html_for_styled_line(&regions[..], IncludeBackground::No, &mut output);
+            let regions = highlighter.highlight(line, ss);
+            append_highlighted_html_for_styled_line(&regions[..], IncludeBackground::No, &mut highlighted);
         }
-        end_table_row(&mut output);
+        end_table_row(&mut highlighted);
+        highlighted
+    })
+}
+
+fn highlight_ranges(code: &str, ss: &SyntaxSet, syntax: &SyntaxReference, theme: &Theme, highlight_long_lines: bool, ranges: &[LineRange]) -> Vec<Vec<String>> {
+    let mut output: Vec<Vec<String>> = vec![Vec::with_capacity(10); ranges.len()];
+    for row in highlighted_rows(code, ss, syntax, theme, highlight_long_lines) {
+        for (i, v) in output.iter_mut().enumerate() {
+            if ranges[i].contains(i) {
+                v.push(row.clone());
+            }
+        }
+    }
+
+    output
+}
+
+fn highlight_file(code: &str, ss: &SyntaxSet, syntax: &SyntaxReference, theme: &Theme, highlight_long_lines: bool) -> String {
+    let mut output = String::with_capacity(8 * code.len()); //Heuristic based on experimental results
+    start_highlighted_table(&mut output);
+
+    for line in highlighted_rows(code, ss, syntax, theme, highlight_long_lines) {
+        output.push_str(&line)
     }
 
     end_highlighted_table(&mut output);
     output
 }
 
-fn start_highlighted_table() -> String {
-    "<table><tbody>".into()
+fn start_highlighted_table(s: &mut String) {
+    s.push_str("<table><tbody>")
 }
 
 fn end_highlighted_table(s: &mut String) {
@@ -146,7 +168,7 @@ impl From<HighlightError> for JsValue {
 mod tests {
     use std::fs;
     use super::highlight;
-    use difference::assert_diff;
+    use html_diff::get_differences;
 
     struct Asset {
         input: String,
@@ -161,11 +183,41 @@ mod tests {
         Asset { input, output, filename }
     }
 
+    fn test_asset(id: usize) {
+        let asset = read_asset(id);
+        let result = highlight(&asset.input, &asset.filename, true, true).unwrap();
+        assert_diff(&result, &asset.output);
+    }
+
+    fn assert_diff(left: &str, right: &str) {
+        let mut has_diffs = false;
+        {
+            for d in get_differences(left, right) {
+                has_diffs = true;
+                println!("{}", d.to_string());
+            }
+        }
+        assert!(!has_diffs);
+    }
+
     #[test]
     fn asset1() {
-        let asset = read_asset(1);
-        let result = highlight(asset.input, asset.filename, true, true).unwrap();
-        assert_diff!(&asset.output, &result, "", 0);
+        test_asset(1)
+    }
+
+    #[test]
+    fn asset2() {
+        test_asset(2)
     }
 }
 
+struct LineRange{
+    pub start: usize,
+    pub end: usize,
+}
+
+impl LineRange {
+    fn contains(&self, line_num: usize) -> bool {
+        return line_num >= self.start && line_num <= self.end
+    }
+}

@@ -1,20 +1,25 @@
 [package]
-name = "without-a-bundler"
+name = "hl"
 version = "0.1.0"
 authors = ["The wasm-bindgen Developers"]
 edition = "2018"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "lib"]
+path = "./src/lib.rs"
+
+[[bin]]
+name = "hlbin"
+path = "./src/main.rs"
 
 [dependencies]
-syntect = { git = "https://github.com/slimsag/syntect.git", default-features = false, features = [ "default-fancy" ] }
+syntect = { path = "./syntect" , default_features = false, features = ["default-fancy"]}
 wasm-bindgen = { version = "0.2", features = ["serde-serialize"] }
 lazy_static = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 wee_alloc = "0.4.5"
 mime-sniffer = "^0.1"
-difference = "2.0"
+html-diff = "0.0.6"
 
 [dependencies.web-sys]
 version = "0.3.4"
